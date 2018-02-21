@@ -10,53 +10,54 @@
 
 namespace Kdyby\Translation;
 
+use Kdyby;
 use Kdyby\Translation\Diagnostics\Panel;
-use Latte\Runtime\IHtmlString as LatteHtmlString;
-use Nette\Utils\IHtmlString as NetteHtmlString;
-use Nette\Utils\Strings;
-use Psr\Log\LoggerInterface;
-use Symfony\Component\Translation\Formatter\MessageFormatter;
+use Nette;
+use Nette\Utils\ObjectMixin;
 use Symfony\Component\Translation\Loader\LoaderInterface;
+use Symfony\Component\Translation\MessageSelector;
+use Symfony\Component\Translation\Translator as BaseTranslator;
 
-class Translator extends \Symfony\Component\Translation\Translator implements \Kdyby\Translation\ITranslator
+
+
+/**
+ * Translator.
+ *
+ * @author Fabien Potencier <fabien@symfony.com>
+ * @author Filip Procházka <filip@prochazka.su>
+ */
+class Translator extends BaseTranslator implements ITranslator
 {
 
-	use \Kdyby\StrictObjects\Scream;
-
 	/**
-	 * @var \Kdyby\Translation\IUserLocaleResolver
+	 * @var IUserLocaleResolver
 	 */
 	private $localeResolver;
 
 	/**
-	 * @var \Kdyby\Translation\CatalogueCompiler
+	 * @var CatalogueCompiler
 	 */
 	private $catalogueCompiler;
 
 	/**
-	 * @var \Kdyby\Translation\FallbackResolver
+	 * @var FallbackResolver
 	 */
 	private $fallbackResolver;
 
 	/**
-	 * @var \Kdyby\Translation\IResourceLoader
+	 * @var IResourceLoader
 	 */
 	private $translationsLoader;
 
 	/**
-	 * @var \Psr\Log\LoggerInterface|NULL
-	 */
-	private $psrLogger;
-
-	/**
-	 * @var \Kdyby\Translation\Diagnostics\Panel|NULL
+	 * @var Panel
 	 */
 	private $panel;
 
 	/**
 	 * @var array
 	 */
-	private $availableResourceLocales = [];
+	private $availableResourceLocales = array();
 
 	/**
 	 * @var string
@@ -64,78 +65,63 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 	private $defaultLocale;
 
 	/**
-	 * @var string|NULL
+	 * @var string
 	 */
 	private $localeWhitelist;
 
-	/**
-	 * @var \Symfony\Component\Translation\Formatter\MessageFormatter
-	 */
-	private $formatter;
+
 
 	/**
-	 * @param \Kdyby\Translation\IUserLocaleResolver $localeResolver
-	 * @param \Symfony\Component\Translation\Formatter\MessageFormatter $formatter
-	 * @param \Kdyby\Translation\CatalogueCompiler $catalogueCompiler
-	 * @param \Kdyby\Translation\FallbackResolver $fallbackResolver
-	 * @param \Kdyby\Translation\IResourceLoader $loader
-	 * @throws \InvalidArgumentException
+	 * @param IUserLocaleResolver $localeResolver
+	 * @param MessageSelector $selector The message selector for pluralization
+	 * @param CatalogueCompiler $catalogueCompiler
+	 * @param FallbackResolver $fallbackResolver
+	 * @param IResourceLoader $loader
 	 */
-	public function __construct(
-		IUserLocaleResolver $localeResolver,
-		MessageFormatter $formatter,
-		CatalogueCompiler $catalogueCompiler,
-		FallbackResolver $fallbackResolver,
-		IResourceLoader $loader
-	)
+	public function __construct(IUserLocaleResolver $localeResolver, MessageSelector $selector,
+		CatalogueCompiler $catalogueCompiler, FallbackResolver $fallbackResolver, IResourceLoader $loader)
 	{
 		$this->localeResolver = $localeResolver;
-		$this->formatter = $formatter;
 		$this->catalogueCompiler = $catalogueCompiler;
 		$this->fallbackResolver = $fallbackResolver;
 		$this->translationsLoader = $loader;
 
-		parent::__construct('', $formatter);
-		$this->setLocale(NULL);
+		parent::__construct(NULL, $selector);
 	}
+
+
 
 	/**
 	 * @internal
-	 * @param \Kdyby\Translation\Diagnostics\Panel $panel
+	 * @param Panel $panel
 	 */
 	public function injectPanel(Panel $panel)
 	{
 		$this->panel = $panel;
 	}
 
-	/**
-	 * @param \Psr\Log\LoggerInterface|NULL $logger
-	 */
-	public function injectPsrLogger(LoggerInterface $logger = NULL)
-	{
-		$this->psrLogger = $logger;
-	}
+
 
 	/**
 	 * Translates the given string.
 	 *
-	 * @param string|\Kdyby\Translation\Phrase|mixed $message The message id
-	 * @param int|array|NULL $count The number to use to find the indice of the message
-	 * @param string|array|NULL $parameters An array of parameters for the message
-	 * @param string|NULL $domain The domain for the message
-	 * @param string|NULL $locale The locale
-	 * @throws \InvalidArgumentException
-	 * @return string|\Nette\Utils\IHtmlString|\Latte\Runtime\IHtmlString
+	 * @param string  $message    The message id
+	 * @param integer $count      The number to use to find the indice of the message
+	 * @param array   $parameters An array of parameters for the message
+	 * @param string  $domain     The domain for the message
+	 * @param string  $locale     The locale
+	 *
+	 * @return string
 	 */
-	public function translate($message, $count = NULL, $parameters = [], $domain = NULL, $locale = NULL)
+	public function translate($message, $count = NULL, $parameters = array(), $domain = NULL, $locale = NULL)
 	{
 		if ($message instanceof Phrase) {
 			return $message->translate($this);
 		}
 
 		if (is_array($count)) {
-			$locale = ($domain !== NULL) ? (string) $domain : NULL;
-			$domain = ($parameters !== NULL && !empty($parameters)) ? (string) $parameters : NULL;
+			$locale = $domain ?: NULL;
+			$domain = $parameters ?: NULL;
 			$parameters = $count;
 			$count = NULL;
 		}
@@ -143,51 +129,39 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		if (empty($message)) {
 			return $message;
 
-		} elseif ($message instanceof NetteHtmlString || $message instanceof LatteHtmlString) {
-			$this->logMissingTranslation($message->__toString(), $domain, $locale);
-			return $message; // what now?
-		}
-
-		if (!is_string($message)) {
-			throw new \Kdyby\Translation\InvalidArgumentException(sprintf('Message id must be a string, %s was given', gettype($message)));
-		}
-
-		if (Strings::startsWith($message, '//')) {
-			if ($domain !== NULL) {
-				throw new \Kdyby\Translation\InvalidArgumentException(sprintf(
-					'Providing domain "%s" while also having the message "%s" absolute is not supported',
-					$domain,
-					$message
-				));
+		} elseif ($message instanceof Nette\Utils\Html) {
+			if ($this->panel) {
+				$this->panel->markUntranslated($message);
 			}
-
-			$message = Strings::substring($message, 2);
+			return $message; // todo: what now?
 		}
 
-		$tmp = [];
+		$tmp = array();
 		foreach ($parameters as $key => $val) {
 			$tmp['%' . trim($key, '%') . '%'] = $val;
 		}
 		$parameters = $tmp;
 
 		if ($count !== NULL && is_scalar($count)) {
-			return $this->transChoice($message, $count, $parameters + ['%count%' => $count], $domain, $locale);
+			return $this->transChoice($message, $count, $parameters + array('%count%' => $count), $domain, $locale);
 		}
 
 		return $this->trans($message, $parameters, $domain, $locale);
 	}
 
+
+
 	/**
 	 * {@inheritdoc}
 	 */
-	public function trans($message, array $parameters = [], $domain = NULL, $locale = NULL)
+	public function trans($message, array $parameters = array(), $domain = NULL, $locale = NULL)
 	{
-		if (!is_string($message)) {
-			throw new \Kdyby\Translation\InvalidArgumentException(sprintf('Message id must be a string, %s was given', gettype($message)));
+		if ($message instanceof Phrase) {
+			return $message->translate($this);
 		}
 
 		if ($domain === NULL) {
-			list($domain, $id) = $this->extractMessageDomain($message);
+			list($domain, $id) = Helpers::extractMessageDomain($message);
 
 		} else {
 			$id = $message;
@@ -195,24 +169,28 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 
 		$result = parent::trans($id, $parameters, $domain, $locale);
 		if ($result === "\x01") {
-			$this->logMissingTranslation($message, $domain, $locale);
+			if ($this->panel !== NULL) {
+				$this->panel->markUntranslated($message);
+			}
 			$result = strtr($message, $parameters);
 		}
 
 		return $result;
 	}
 
+
+
 	/**
 	 * {@inheritdoc}
 	 */
-	public function transChoice($message, $number, array $parameters = [], $domain = NULL, $locale = NULL)
+	public function transChoice($message, $number, array $parameters = array(), $domain = NULL, $locale = NULL)
 	{
-		if (!is_string($message)) {
-			throw new \Kdyby\Translation\InvalidArgumentException(sprintf('Message id must be a string, %s was given', gettype($message)));
+		if ($message instanceof Phrase) {
+			return $message->translate($this);
 		}
 
 		if ($domain === NULL) {
-			list($domain, $id) = $this->extractMessageDomain($message);
+			list($domain, $id) = Helpers::extractMessageDomain($message);
 
 		} else {
 			$id = $message;
@@ -224,35 +202,33 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		} catch (\Exception $e) {
 			$result = $id;
 			if ($this->panel !== NULL) {
-				$this->panel->choiceError($e, $domain);
+				$this->panel->choiceError($e);
 			}
 		}
 
 		if ($result === "\x01") {
-			$this->logMissingTranslation($message, $domain, $locale);
-			if ($locale === NULL) {
-				$locale = $this->getLocale();
+			if ($this->panel !== NULL) {
+				$this->panel->markUntranslated($message);
 			}
-			if ($locale === NULL) {
-				$result = strtr($message, $parameters);
-
-			} else {
-				$result = $this->formatter->choiceFormat($message, (int) $number, $locale, $parameters);
-			}
+			$result = strtr($message, $parameters);
 		}
 
 		return $result;
 	}
 
+
+
 	/**
 	 * @param string $format
-	 * @param \Symfony\Component\Translation\Loader\LoaderInterface $loader
+	 * @param LoaderInterface $loader
 	 */
 	public function addLoader($format, LoaderInterface $loader)
 	{
 		parent::addLoader($format, $loader);
 		$this->translationsLoader->addLoader($format, $loader);
 	}
+
+
 
 	/**
 	 * @return \Symfony\Component\Translation\Loader\LoaderInterface[]
@@ -262,21 +238,26 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		return $this->translationsLoader->getLoaders();
 	}
 
+
+
 	/**
 	 * @param array $whitelist
+	 * @return Translator
 	 */
 	public function setLocaleWhitelist(array $whitelist = NULL)
 	{
 		$this->localeWhitelist = self::buildWhitelistRegexp($whitelist);
 	}
 
+
+
 	/**
 	 * {@inheritdoc}
 	 */
 	public function addResource($format, $resource, $locale, $domain = NULL)
 	{
-		if ($this->localeWhitelist !== NULL && !preg_match($this->localeWhitelist, $locale)) {
-			if ($this->panel !== NULL) {
+		if ($this->localeWhitelist && !preg_match($this->localeWhitelist, $locale)) {
+			if ($this->panel) {
 				$this->panel->addIgnoredResource($format, $resource, $locale, $domain);
 			}
 			return;
@@ -286,10 +267,12 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		$this->catalogueCompiler->addResource($format, $resource, $locale, $domain);
 		$this->availableResourceLocales[$locale] = TRUE;
 
-		if ($this->panel !== NULL) {
+		if ($this->panel) {
 			$this->panel->addResource($format, $resource, $locale, $domain);
 		}
 	}
+
+
 
 	/**
 	 * {@inheritdoc}
@@ -299,6 +282,8 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		parent::setFallbackLocales($locales);
 		$this->fallbackResolver->setFallbackLocales($locales);
 	}
+
+
 
 	/**
 	 * Returns array of locales from given resources
@@ -312,31 +297,21 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		return $locales;
 	}
 
-	/**
-	 * Sets the current locale.
-	 *
-	 * @param string|NULL $locale The locale
-	 *
-	 * @throws \InvalidArgumentException If the locale contains invalid characters
-	 */
-	public function setLocale($locale)
-	{
-		parent::setLocale($locale);
-	}
+
 
 	/**
-	 * Returns the current locale.
-	 *
-	 * @return string|NULL The locale
+	 * {@inheritdoc}
 	 */
 	public function getLocale()
 	{
-		if (parent::getLocale() === NULL) {
+		if ($this->locale === NULL) {
 			$this->setLocale($this->localeResolver->resolve($this));
 		}
 
-		return parent::getLocale();
+		return $this->locale;
 	}
+
+
 
 	/**
 	 * @return string
@@ -346,9 +321,11 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		return $this->defaultLocale;
 	}
 
+
+
 	/**
 	 * @param string $locale
-	 * @return \Kdyby\Translation\Translator
+	 * @return Translator
 	 */
 	public function setDefaultLocale($locale)
 	{
@@ -357,22 +334,28 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		return $this;
 	}
 
+
+
 	/**
 	 * @param string $messagePrefix
-	 * @return \Kdyby\Translation\ITranslator
+	 * @return ITranslator
 	 */
 	public function domain($messagePrefix)
 	{
 		return new PrefixedTranslator($messagePrefix, $this);
 	}
 
+
+
 	/**
-	 * @return \Kdyby\Translation\TemplateHelpers
+	 * @return TemplateHelpers
 	 */
 	public function createTemplateHelpers()
 	{
 		return new TemplateHelpers($this);
 	}
+
+
 
 	/**
 	 * {@inheritdoc}
@@ -380,7 +363,7 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 	protected function loadCatalogue($locale)
 	{
 		if (empty($locale)) {
-			throw new \Kdyby\Translation\InvalidArgumentException('Invalid locale.');
+			throw new InvalidArgumentException("Invalid locale.");
 		}
 
 		if (isset($this->catalogues[$locale])) {
@@ -390,6 +373,8 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		$this->catalogues = $this->catalogueCompiler->compile($this, $this->catalogues, $locale);
 	}
 
+
+
 	/**
 	 * {@inheritdoc}
 	 */
@@ -397,6 +382,8 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 	{
 		return $this->fallbackResolver->compute($this, $locale);
 	}
+
+
 
 	/**
 	 * Asserts that the locale is valid, throws an Exception if not.
@@ -411,53 +398,147 @@ class Translator extends \Symfony\Component\Translation\Translator implements \K
 		}
 	}
 
-	/**
-	 * @param string $message
-	 * @return array
-	 */
-	private function extractMessageDomain($message)
-	{
-		if (strpos($message, '.') !== FALSE && strpos($message, ' ') === FALSE) {
-			list($domain, $message) = explode('.', $message, 2);
 
-		} else {
-			$domain = 'messages';
-		}
-
-		return [$domain, $message];
-	}
 
 	/**
-	 * @param string|NULL $message
-	 * @param string|NULL $domain
-	 * @param string|NULL $locale
-	 */
-	protected function logMissingTranslation($message, $domain, $locale)
-	{
-		if ($message === NULL) {
-			return;
-		}
-
-		if ($this->psrLogger !== NULL) {
-			$this->psrLogger->notice('Missing translation', [
-				'message' => $message,
-				'domain' => $domain,
-				'locale' => $locale ?: $this->getLocale(),
-			]);
-		}
-
-		if ($this->panel !== NULL) {
-			$this->panel->markUntranslated($message, $domain);
-		}
-	}
-
-	/**
-	 * @param array|NULL $whitelist
+	 * @param null|string $whitelist
 	 * @return null|string
 	 */
 	public static function buildWhitelistRegexp($whitelist)
 	{
-		return ($whitelist !== NULL) ? '~^(' . implode('|', $whitelist) . ')~i' : NULL;
+		return $whitelist ? '~^(' . implode('|', $whitelist) . ')~i' : NULL;
+	}
+
+
+
+	/*************************** Nette\Object ***************************/
+
+
+
+	/**
+	 * Access to reflection.
+	 * @return \Nette\Reflection\ClassType
+	 */
+	public static function getReflection()
+	{
+		return new Nette\Reflection\ClassType(get_called_class());
+	}
+
+
+
+	/**
+	 * Call to undefined method.
+	 *
+	 * @param string $name
+	 * @param array $args
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return mixed
+	 */
+	public function __call($name, $args)
+	{
+		return ObjectMixin::call($this, $name, $args);
+	}
+
+
+
+	/**
+	 * Call to undefined static method.
+	 *
+	 * @param string $name
+	 * @param array $args
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return mixed
+	 */
+	public static function __callStatic($name, $args)
+	{
+		return ObjectMixin::callStatic(get_called_class(), $name, $args);
+	}
+
+
+
+	/**
+	 * Adding method to class.
+	 *
+	 * @param $name
+	 * @param null $callback
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return callable|null
+	 */
+	public static function extensionMethod($name, $callback = NULL)
+	{
+		if (strpos($name, '::') === FALSE) {
+			$class = get_called_class();
+		} else {
+			list($class, $name) = explode('::', $name);
+		}
+		if ($callback === NULL) {
+			return ObjectMixin::getExtensionMethod($class, $name);
+		} else {
+			ObjectMixin::setExtensionMethod($class, $name, $callback);
+		}
+	}
+
+
+
+	/**
+	 * Returns property value. Do not call directly.
+	 *
+	 * @param string $name
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return mixed
+	 */
+	public function &__get($name)
+	{
+		return ObjectMixin::get($this, $name);
+	}
+
+
+
+	/**
+	 * Sets value of a property. Do not call directly.
+	 *
+	 * @param string $name
+	 * @param mixed $value
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return void
+	 */
+	public function __set($name, $value)
+	{
+		ObjectMixin::set($this, $name, $value);
+	}
+
+
+
+	/**
+	 * Is property defined?
+	 *
+	 * @param string $name
+	 *
+	 * @return bool
+	 */
+	public function __isset($name)
+	{
+		return ObjectMixin::has($this, $name);
+	}
+
+
+
+	/**
+	 * Access to undeclared property.
+	 *
+	 * @param string $name
+	 *
+	 * @throws \Nette\MemberAccessException
+	 * @return void
+	 */
+	public function __unset($name)
+	{
+		ObjectMixin::remove($this, $name);
 	}
 
 }
